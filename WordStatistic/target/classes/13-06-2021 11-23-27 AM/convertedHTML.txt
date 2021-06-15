@@ -1,0 +1,226 @@
+Аспектно-ориентированное программирование, Spring AOP / Хабр Все сервисы Хабра Сообщество IT-специалистов Ответы на любые вопросы об IT Профессиональное развитие в IT Удаленная работа для IT-специалистов Как стать автором Все потоки Разработка Администрирование Дизайн Менеджмент Маркетинг Научпоп Войти Регистрация arylkov 5 ноября 2018 в 07:43 Аспектно-ориентированное программирование, Spring AOP Java Аспектно-ориентированное программирование (АОП) — это парадигма программирования являющейся дальнейшим развитием процедурного и объектно-ориентированного программирования (ООП). Идея АОП заключается в выделении так называемой сквозной функциональности. И так все по порядку, здесь я покажу как это сделать в Java — Spring @AspectJ annotation стиле (есть еще schema-based xml стиль, функциональность аналогичная). Выделении сквозной функциональности До и после Т.е. есть функциональность которая затрагивает несколько модулей, но она не имеет прямого отношения к бизнес коду, и ее хорошо бы вынести в отдельное место, это и показано на рисунке выше. Join point Join point — следующее понятие АОП, это точки наблюдения, присоединения к коду, где планируется введение функциональности. Pointcut Pointcut — это срез, запрос точек присоединения, — это может быть одна и более точек. Правила запросов точек очень разнообразные, на рисунке выше, запрос по аннотации на методе и конкретный метод. Правила можно объединять по &&, ||,! Advice Advice — набор инструкций выполняемых на точках среза (Pointcut). Инструкции можно выполнять по событию разных типов: Before — перед вызовом метода After — после вызова метода After returning — после возврата значения из функции After throwing — в случае exception After finally — в случае выполнения блока finally Around — можно сделать пред., пост., обработку перед вызовом метода, а также вообще обойти вызов метода. на один Pointcut можно «повесить» несколько Advice разного типа. Aspect Aspect — модуль в котором собраны описания Pointcut и Advice. Сейчас приведу пример и окончательно все встанет (или почти все) на свои места. Все знаем про логирование кода который пронизывает многие модули, не имея отношения к бизнес коду, но тем не менее без него нельзя. И так отделяю этот функционал от бизнес кода. Пример — логирование кода Целевой сервис @Service
+public class MyService {
+
+    public void method1(List<String> list) {
+        list.add("method1");
+        System.out.println("MyService method1 list.size=" + list.size());
+    }
+
+    @AspectAnnotation
+    public void method2() {
+        System.out.println("MyService method2");
+    }
+
+    public boolean check() {
+        System.out.println("MyService check");
+        return true;
+    }
+}
+ Аспект с описанием Pointcut и Advice. @Aspect
+@Component
+public class MyAspect {
+
+    private Logger logger = LoggerFactory.getLogger(this.getClass());
+
+    @Pointcut("execution(public * com.example.demoAspects.MyService.*(..))")
+    public void callAtMyServicePublic() { }
+
+    @Before("callAtMyServicePublic()")
+    public void beforeCallAtMethod1(JoinPoint jp) {
+        String args = Arrays.stream(jp.getArgs())
+                .map(a -> a.toString())
+                .collect(Collectors.joining(","));
+        logger.info("before " + jp.toString() + ", args=[" + args + "]");
+    }
+
+    @After("callAtMyServicePublic()")
+    public void afterCallAt(JoinPoint jp) {
+        logger.info("after " + jp.toString());
+    }
+}
+ И вызывающий тестовый код @RunWith(SpringRunner.class)
+@SpringBootTest
+public class DemoAspectsApplicationTests {
+
+    @Autowired
+    private MyService service;
+
+    @Test
+    public void testLoggable() {
+        List<String> list = new ArrayList();
+        list.add("test");
+
+        service.method1(list);
+        service.method2();
+        Assert.assertTrue(service.check());
+    }
+
+}
+ Пояснения. В целевом сервисе нет никакого упоминания про запись в лог, в вызывающем коде тем более, в все логирование сосредоточено в отдельном модуле @Aspect class MyAspect ... В Pointcut     @Pointcut("execution(public * com.example.demoAspects.MyService.*(..))")
+    public void callAtMyServicePublic() { }
+ я запросил все public методы MyService с любым типом возврата * и количеством аргументов (..) В Advice Before и After которые ссылаются на Pointcut (callAtMyServicePublic), я написал инструкции для записи в лог. JoinPoint это не обязательный параметр который, предоставляет дополнительную информацию, но если он используется, то он должен быть первым. Все разнесено в разные модули! Вызывающий код, целевой, логирование. Результат в консоли Правила Pointcut могут быть различные Несколько примеров Pointcut и Advice: Запрос по аннотации на методе. @Pointcut("@annotation(AspectAnnotation)")
+public void callAtMyServiceAnnotation() { }
+ Advice для него  @Before("callAtMyServiceAnnotation()")
+    public void beforeCallAt() { } 
+ Запрос на конкретный метод с указанием параметров целевого метода @Pointcut("execution(* com.example.demoAspects.MyService.method1(..)) && args(list,..))")
+public void callAtMyServiceMethod1(List<String> list) { }
+ Advice для него  @Before("callAtMyServiceMethod1(list)")
+    public void beforeCallAtMethod1(List<String> list) { }
+ Pointcut для результата возврата     @Pointcut("execution(* com.example.demoAspects.MyService.check())")
+    public void callAtMyServiceAfterReturning() { }
+ Advice для него     @AfterReturning(pointcut="callAtMyServiceAfterReturning()", returning="retVal")
+    public void afterReturningCallAt(boolean retVal) { }
+ Пример проверки прав на Advice типа Around, через аннотацию    
+  @Retention(RUNTIME)
+  @Target(METHOD)
+   public @interface SecurityAnnotation {
+   }
+   //
+   @Aspect
+   @Component
+   public class MyAspect {
+    
+    @Pointcut("@annotation(SecurityAnnotation) && args(user,..)")
+    public void callAtMyServiceSecurityAnnotation(User user) { }
+
+    @Around("callAtMyServiceSecurityAnnotation(user)")
+    public Object aroundCallAt(ProceedingJoinPoint pjp, User user) {
+        Object retVal = null;
+        if (securityService.checkRight(user)) {
+         retVal = pjp.proceed();
+         }
+        return retVal;
+    }
+ Методы которые необходимо проверять перед вызовом, на право, можно аннотировать «SecurityAnnotation», далее в Aspect получим их срез, и все они будут перехвачены перед вызовом и сделана проверка прав. Целевой код: @Service
+public class MyService {
+
+   @SecurityAnnotation
+   public Balance getAccountBalance(User user) {
+       // ...
+   }
+
+   @SecurityAnnotation
+   public List<Transaction> getAccountTransactions(User user, Date date) {
+       // ...
+   }
+  
+}
+ Вызывающий код: balance = myService.getAccountBalance(user);
+if (balance == null) {
+   accessDenied(user);
+} else {
+   displayBalance(balance);
+}
+ Т.е. в вызывающем коде и целевом, проверка прав отсутствует, только непосредственно бизнес код. Пример профилирование того же сервиса с использованием Advice типа Around @Aspect
+@Component
+public class MyAspect {
+
+    @Pointcut("execution(public * com.example.demoAspects.MyService.*(..))")
+    public void callAtMyServicePublic() {
+    }
+
+    @Around("callAtMyServicePublic()")
+    public Object aroundCallAt(ProceedingJoinPoint call) throws Throwable {
+        StopWatch clock = new StopWatch(call.toString());
+        try {
+            clock.start(call.toShortString());
+            return call.proceed();
+        } finally {
+            clock.stop();
+            System.out.println(clock.prettyPrint());
+        }
+    }
+}
+ Если запустить вызывающий код с вызовами методов MyService, то получим время вызова каждого метода. Таким образом не меняя вызывающий код и целевой я добавил новые функциональности: логирование, профайлер и безопасность. Пример использование в UI формах есть код который по настройке скрывает/показывает поля на форме: public class EditForm extends Form {
+
+@Override
+public void init(Form form) {
+   formHelper.updateVisibility(form, settingsService.isVisible(COMP_NAME));
+   formHelper.updateVisibility(form, settingsService.isVisible(COMP_LAST_NAME));
+   formHelper.updateVisibility(form, settingsService.isVisible(COMP_BIRTH_DATE));
+   // ...
+}    
+ так же можно updateVisibility убрать в Advice типа Around     
+@Aspect
+public class MyAspect {
+
+@Pointcut("execution(* com.example.demoAspects.EditForm.init() && args(form,..))")
+    public void callAtInit(Form form) { }
+
+    // ...
+    @Around("callAtInit(form)")
+    public Object aroundCallAt(ProceedingJoinPoint pjp, Form form) {
+       formHelper.updateVisibility(form, settingsService.isVisible(COMP_NAME));
+       formHelper.updateVisibility(form, settingsService.isVisible(COMP_LAST_NAME));
+       formHelper.updateVisibility(form, settingsService.isVisible(COMP_BIRTH_DATE));        
+       Object retVal = pjp.proceed();
+       return retVal;
+    }
+ и.т.д. Структура проекта pom файл <?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+
+	<groupId>com.example</groupId>
+	<artifactId>demoAspects</artifactId>
+	<version>0.0.1-SNAPSHOT</version>
+	<packaging>jar</packaging>
+
+	<name>demoAspects</name>
+	<description>Demo project for Spring Boot Aspects</description>
+
+	<parent>
+		<groupId>org.springframework.boot</groupId>
+		<artifactId>spring-boot-starter-parent</artifactId>
+		<version>2.0.6.RELEASE</version>
+		<relativePath/> <!-- lookup parent from repository -->
+	</parent>
+
+	<properties>
+		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+		<project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+		<java.version>1.8</java.version>
+	</properties>
+
+	<dependencies>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-aop</artifactId>
+		</dependency>
+
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+	</dependencies>
+
+	<build>
+		<plugins>
+			<plugin>
+				<groupId>org.springframework.boot</groupId>
+				<artifactId>spring-boot-maven-plugin</artifactId>
+			</plugin>
+		</plugins>
+	</build>
+
+
+</project>
+
+ Материалы Aspect Oriented Programming with Spring Теги: java аоп модули аспектно-ориентированное Добавить метки Хабы: Java Укажите причину минуса, чтобы автор поработал над ошибками Отправить анонимно Пометьте публикацию своими метками Метки лучше разделять запятой. Например: программирование, алгоритмы Сохранить Реклама AdBlock похитил этот баннер, но баннеры не зубы — отрастут Подробнее Читают сейчас Суд в Казахстане постановил запретить «Яндекс.Такси» и прекратить распространять приложения «Яндекс Go» 24,6k 40 Антирекламный щит рядового пользователя: Яндекс без дзена, YouTube без рекламы, Хабр без баннера 16,5k 72 Хакеры потратили $10, чтобы проникнуть внутрь периметра сети Electronic Arts и скачать исходные коды FIFA 21 и Frostbite 1,5k 1 Как защититься от синдрома запястного канала? 11,4k 29 Реверс инжиниринг приборной панели Nissan Muran Z50 1,1k 1 5 самых старых нерешенных задач Математики о простых числах 3,1k 6 Как продать продукт, а не партнёра Мегапост Редакторский дайджест Присылаем лучшие статьи раз в месяц Скоро на этот адрес придет письмо. Подтвердите подписку, если всё в силе. +6 147 62,7k 21 Поделиться Скопировать ссылку Facebook Twitter ВКонтакте Telegram Pocket Нарушение Опишите суть нарушения Отправить 21,0 Карма 0,0 Рейтинг Александр Рыльков arylkov Разработчик Платежная система Похожие публикации 22 октября 2019 в 17:57 Динамическое аспектно-ориентированное 12 3,6k 47 24 29 июня 2018 в 17:43 Аспектно-ориентированное программирование на PHP 7 7,6k 40 14 3 апреля 2015 в 11:54 Аспектно-ориентированное программирование. Основы 9 39,1k 115 15 Курсы Программист Java 19 июня 2021 12 месяцев 77 000 GeekBrains Профессия QA-инженер на Java 23 июня 2021 10 месяцев 59 400 SkillFactory Профессия Java-разработчик 29 июня 2021 18 месяцев 107 250 SkillFactory Spring Cloud для Java-разработчиков 5 июля 2021 30 200 Luxoft Training Основы программирования на Java. Уровень 1 8 июля 2021 5 недель 14 500 Level UP Больше курсов на Хабр Карьере Реклама AdBlock похитил этот баннер, но баннеры не зубы — отрастут Подробнее Минуточку внимания Комментарии 21 vba 5 ноября 2018 в 12:19 +1 На дворе 2018 вроде, а значит AOP все еще зло. arylkov 5 ноября 2018 в 14:34 0 В чем зло то? JustDont 5 ноября 2018 в 14:51 0 Так всё те же проблемы, которые были сразу высказаны: unknown side effects (или, говоря по-русски, хрен поймешь, сколько кода и в какой последовательности у тебя выполнится через все аспекты) и fragile pointcut (или, говоря по-русски, изменения в базовом коде изменят порядок и объем связанных с этим pointcut). Проще говоря, вот эти вот @Pointcut(«execution(* com.example.demoAspects.MyService.check())») легко ломаются, и попробуйте разберитесь, что конкретно у вас сломается в сложном проекте с хотя бы сотнями pointcut (молчу уж про тысячи). arylkov 5 ноября 2018 в 15:07 –1 Что, ломаются, так это еще пока от не совершенства языка и реализации framework, а сама парадигма дает развитие, может через некоторое время все это и др., будет стандартом. JustDont 5 ноября 2018 в 15:52 0 Это да. Но все эти годы я вижу тренд обратного направления, тренд на программистские инструменты, не позволяющие программисту нечаянно создать себе трудноразрешимых проблем (пусть и ценой разнообразных недостатков). AOP же совершенно в другую сторону, способов фатально отстрелить себе ногу тут сколько угодно, просто применив AOP там, где его применять не стоит. ЗЫ: И не думаю, что в будущем небезопасное программирование когда-нибудь выиграет общий тренд у безопасного, причина-то банальна: хороших программистов, могущих сознательно не стрелять себе в ноги — значительно меньше, чем программистов, иногда стреляющих, если есть такая возможность. sshikov 5 ноября 2018 в 22:00 0 Дело в том, что AOP — это всего-лишь инструмент. Бездумное применение инструмента — вот это и есть зло. Вы попробуйте в чужой код (скажем, вендорский, без исходников) внедрить логирование, чтобы отловить ошибки, если там его нет. Или мониторинг со сбором метрик добавить. Я пробовал. И по большому счету, ничего лучше чем AOP (только не в таком «штатном» виде, как тут описано, а скорее как вот тут). Проблемы? Сломается? Но иногда в ситуациях вроде чужого кода это чуть ли не единственно возможный способ внести изменения в чужой код. Точнее, не единственный, потому что есть похожие инструменты типа byteman, но это по большому счету тот же AOP, только в профиль, с другим синтаксисом описания аспектов и их внедрения. arylkov 5 ноября 2018 в 16:05 0 Имел в виду, что язык не позволит делать трудно находимые ошибки, сейчас reflection, и аннотации, чуть ли не единственный способ расширить сам язык, отсюда и вероятность выстрелить себе в ногу ). Но желание сообщества иметь более совершенные способы разработки опережают предложение разработчика языка. Тут нужен пока разумеый компромисс xdenser 5 ноября 2018 в 18:52 0 Могу подтвердить злобность AspectJ. Поначалу было вроде красиво и круто. Был load time weaving. Потом после перехода на Java 8 полезли странные баги, которые трудно воспроизвести. Ну и время старта приложения не прилично росло — ему же надо весь код перелопатить. Перешли на обработку во время компиляции — тепепь хоть есть уверенность, что сервер не упадет от этих ошибок. Но все равно билды падают иногда в местах, где все синтактически правильно. Баг репорты заполнены, но поскольку оно падает может 1 раз из ста, никто их не пофиксил. И врядли пофиксит. Ну о том что оно скачет неизвестно куда в дебагере и в стектрейсы странные видят люди, которые не разбираются в том, что аспект делает, я уже молчу. arylkov 5 ноября 2018 в 20:38 0 Не берусь судить, как используется АОП, но соглашусь, что сделать сложным к пониманию, отладки, проект с ним можно. Но это вопрос к архитектуре, но так как на проектах унас большая текучка, то и допускаю что много перегибов. Меня больше интересовал академический аспект АОП и его частная реализация, ну а пока мы заложники прогресса. Спасибо. Throwable 5 ноября 2018 в 22:34 0 Декларативное описание, да еще не type-safe, да еще по имени класса/метода с сигнатурой и с wildcards… Прям как новая серия игр "Что? Где? Когда?". Тут простой рефакторинг все сразу поломает. И главное, для чего? Есть же Proxy.newProxyInstance(), ByteBuddy и BeanPostProcessor для детерминированного инжекта. funca 6 ноября 2018 в 00:02 0 Порекомендуйте как тестировать такой код, чтобы быть спокойным, что аспект пророс куда нужно и не пророс куда не нужно? Если правка в бизнес коде нечаянно ломает аспект, как это обнаружить и чья ответственность чинить поломанное? arylkov 6 ноября 2018 в 19:38 0 spring testing, AopTestUtils, тут можно посмотреть vyatsek 6 ноября 2018 в 14:40 0 @Around("callAtMyServiceSecurityAnnotation(user)") АОП сковзная функциональность, которую вполне можно вызывать через статический вызов класса, внутри которого инстанс соаздается через ServiceLocator. public static Security{ private static final Lazy<ISecurityService> lazySecurityService = new Lazy(Container::Resolve<ISecurityService>) public void logEvent(anyparams){ lazy.value.logEvent(anyparams); } } В общем случае это тоже не идеальное решение, непонятно в какое время будет проинстанциирован ISecurityService и когда уничтожен, но такой подход избавляет от ненужных параметров в конструкторе и в случае падения stacktrace более наглядный. А кода примерно столько же, что аннтоация, что строчка вызова. xpendence 6 ноября 2018 в 16:37 0 Я попытался использовать AOP по Вашему примеру, но что-то не заходит в сам метод Before. Я описал проблему на stackoverflow, посмотрите, пожалуйста, и дайте совет, что не так. arylkov 6 ноября 2018 в 17:31 0 Проверьте pom, на предмет spring-boot-starter-aop, spring-boot-starter-test В тесте должен @RunWith(SpringRunner.class) @SpringBootTest Как будто АОП не стартует xpendence 6 ноября 2018 в 17:45 0 всё оказалось проще — не хватало @EnableAspectJAutoProxy arylkov 6 ноября 2018 в 17:47 0 Чувствовал, что аоп не стартует xpendence 7 ноября 2018 в 12:07 0 Тогда ещё один вопрос. Вот у меня два метода, на которые я хочу повесить аспект. @ApiLogBefore(transferType = TransferType.REQUEST, httpMethod = HttpMethod.GET, path = "", param = "transactionId")
+public ResponseEntity save(@RequestParam("transactionId") String transactionId) { и @ApiLogBefore(transferType = TransferType.REQUEST, httpMethod = HttpMethod.GET, path = "/id", param = "id")
+public ResponseEntity get(@RequestParam("id") Long id, HttpServletRequest request) { Метод, который должен перехватывать обе аннотации, выглядит так:     @Before(value = "@annotation(before) && args(param,..)")
+    public void before(ApiLogBefore before, String param) { Но почему-то перехватывается только первый, а второй (где вторым аргументом HttpServletRequest) — почему-то нет. В чём проблема, как думаете? xpendence 7 ноября 2018 в 12:54 0 Ошибку нашёл, просьба не беспокоиться :) xpendence 12 февраля 2019 в 15:31 0 А есть ли возможность сетить значение из @Aspect-метода обратно в обрабатываемый метод? Например, у меня есть контроллер:     @ApiLogRequest(httpMethod = HttpMethod.POST, path = "/planet")
+    @PostMapping
+    public ResponseEntity<PlanetDto> save(@RequestBody PlanetDto dto) {
+        Long requestId;
+        return ResponseEntity.ok(service.save(dto));
+    } и метод, обрабатывающий запрос:     @AfterReturning(value = "@annotation(after)", returning = "responseEntity")
+    public void after(ResponseEntity responseEntity, ApiLogResponse after) throws JsonProcessingException {
+        service.save(ApiLog.of(
+                TransferType.RESPONSE.name(),
+                after.httpMethod().name(),
+                after.path(),
+                new ObjectMapper().writeValueAsString(responseEntity)
+        ));
+    } Можно ли засетить из метода after значение в Long requestId метода save? MisterParser 16 октября 2020 в 19:21 0 Делаю сейчас в проекте логирование API вызовов через аннотации. Возник вопрос куда вешать аннотацию: на интерфейс или на реализацию? Только полноправные пользователи могут оставлять комментарии. Войдите, пожалуйста. Что обсуждают Сейчас Вчера Неделя Стриминг видео с помощью Akka Streams 1,4k 4 Сберлампочки 27,5k 127 Как мы делаем корпус Flipper Zero безупречным 13,6k 53 Чему можно научиться у фикуса-душителя? Паттерн Strangler 2,5k 1 Человеческое, слишком человеческое: должен ли бизнес быть социально ориентированным? Опрос Антирекламный щит рядового пользователя: Яндекс без дзена, YouTube без рекламы, Хабр без баннера 16,5k 72 Ошибку Rockstar может совершить каждый (и я тоже) 11,9k 32 Как защититься от синдрома запястного канала? 11,4k 29 Что можно найти на испанской барахолке: новые находки за сегодня 6,7k 20 Пиктограммы для настоящих котанов IT-ребус Плюсуем к скидке. Покупатели Яндекс.Маркет заметили, что товары для подписчиков Плюса стоят дороже, чем без подписки 86,4k 510 В русском языке не менее 15 падежей (к международному дню русского языка) 32,9k 380 Почему советская лунная программа потерпела неудачу? 25,3k 317 Психотронная тюрьма риторики: история о том, что мешает нам мыслить здраво 24,6k 276 Гонки на багах: гайд по карьере тестировщика Подборка Самое читаемое Сутки Неделя Месяц Суд в Казахстане постановил запретить «Яндекс.Такси» и прекратить распространять приложения «Яндекс Go» +13 24,6k 5 40 Китай показал новые цветные фотографии с марсохода «Чжучжун» +31 45,6k 3 43 Антирекламный щит рядового пользователя: Яндекс без дзена, YouTube без рекламы, Хабр без баннера +21 16,5k 75 72 Ошибку Rockstar может совершить каждый (и я тоже) +44 11,9k 41 32 Microsoft Build 2021: когда кот — это кот Картинки Плюсуем к скидке. Покупатели Яндекс.Маркет заметили, что товары для подписчиков Плюса стоят дороже, чем без подписки +217 86,4k 52 510 Как Replit отжимает мой open-source проект +77 55,4k 57 160 Термоядерный синтез все реальнее: MAST, EAST и ITER, дейтерий-тритиевые эксперименты и другие достижения +56 53,6k 44 97 UML умер, а никто и не заметил? +62 43,9k 122 180 Новинки домашних проекторов от Epson: лазеры и поддержка Android TV Турбо Банки ультимативно лезут к нам в ш̶т̶а̶н̶ы̶ личную жизнь +187 119k 139 421 Откровения пьяного старшего инженера +166 108k 313 166 Сайт сына маминой подруги +253 91,5k 139 359 Как меня чуть не уволили из-за токсичного поведения и что было дальше +294 87k 184 260 Как продать продукт, а не партнёра Мегапост Ваш аккаунт Войти Регистрация Разделы Публикации 
